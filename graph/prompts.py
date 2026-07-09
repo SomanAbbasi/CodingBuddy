@@ -9,3 +9,25 @@ User request:
     """
     return PLANNER_PROMPT
 
+
+
+
+def architect_prompt(plan: str) -> str:
+    return f"""
+You are a software architect.
+
+Generate an implementation plan for the following project.
+
+Return ONLY implementation steps.
+
+Each implementation step must have:
+
+1. filepath
+2. task_description
+
+The task description should briefly describe what should be implemented in that file.
+
+Project:
+
+{plan}
+"""
