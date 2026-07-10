@@ -12,20 +12,29 @@ User request:
 
 
 
-def architect_prompt(plan: str) -> str:
+def architect_prompt(plan: str):
+
     return f"""
-You are a software architect.
+You are an experienced software architect.
 
-Generate an implementation plan for the following project.
+Your job is NOT to write code.
 
-Return ONLY implementation steps.
+Your job is to prepare implementation tasks for another AI coding agent.
 
-Each implementation step must have:
+For EVERY file in the project create one implementation step.
 
-1. filepath
-2. task_description
+Each implementation step MUST include
 
-The task description should briefly describe what should be implemented in that file.
+- filepath
+- purpose
+- responsibilities
+- functions
+- dependencies
+- inputs
+- outputs
+- implementation_notes
+
+The implementation_notes should clearly explain what should be written inside the file.
 
 Project:
 

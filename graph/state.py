@@ -17,12 +17,39 @@ class Plan(BaseModel):
     files:list[str]=Field(description="A list of files to be generated for the app, e.g., ['index.html', 'app.js', 'style.css', etc.]")
 
 
+
 class ImplementationTask(BaseModel):
-    filepath: str = Field(description="The path to the file to be modified")
-    task_description: str = Field(description="A detailed description of the task to be performed on the file, e.g. 'add user authentication', 'implement data processing logic', etc.")
+    filepath: str = Field(
+        description="File that this task belongs to"
+    )
 
+    purpose: str = Field(
+        description="Why this file exists"
+    )
 
+    responsibilities: list[str] = Field(
+        description="Main responsibilities of this file"
+    )
 
+    functions: list[str] = Field(
+        description="Functions/classes/components that should be implemented"
+    )
+
+    dependencies: list[str] = Field(
+        description="Other files this file depends on"
+    )
+
+    inputs: list[str] = Field(
+        description="Inputs received"
+    )
+
+    outputs: list[str] = Field(
+        description="Outputs produced"
+    )
+
+    implementation_notes: str = Field(
+        description="Detailed instructions for the coding agent"
+    )
 
 class TaskPlan(BaseModel):
     implementation_steps: list[ImplementationTask] = Field(description="A list of steps to be taken to implement the task")

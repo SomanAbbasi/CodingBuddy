@@ -12,7 +12,11 @@ load_dotenv()
 
 
 
-llm=ChatGroq(model="qwen/qwen3.6-27b")
+llm = ChatGroq(
+    model="qwen/qwen3.6-27b",
+    temperature=0,
+    max_tokens=4096,
+)
 
 
 
@@ -20,9 +24,12 @@ llm=ChatGroq(model="qwen/qwen3.6-27b")
 def planner_agent(state: dict) -> dict:
     """Converts user prompt into a structured Plan."""
     user_prompt = state["user_prompt"]
-    res = llm.with_structured_output(Plan).invoke(
-        planner_prompt(user_prompt)
-    )
+    structured_llm = llm.with_structured_output(
+    TaskPlan,
+    method="json_schema",
+)
+
+    res = structured_llm.invoke(prompt)
     if res is None:
         raise ValueError("Planner did not return a valid response.")
     return {"plan": res}
@@ -47,13 +54,16 @@ def architect_agent(state: dict) -> dict:
 
     prompt = architect_prompt(plan=plan.model_dump_json())
 
-    print("=" * 80)
-    print(prompt)
-    print("=" * 80)
+    # print("=" * 80)
+    # print(prompt)
+    # print("=" * 80)
 
     res = llm.with_structured_output(TaskPlan).invoke(prompt)
 
-    print(res)
+    # print(len(res.implementation_steps))
+
+    # for step in res.implementation_steps:
+    #     print(step.filepath)
 
     return {"task_plan": res}
 
