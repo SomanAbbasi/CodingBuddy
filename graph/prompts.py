@@ -40,3 +40,23 @@ Project:
 
 {plan}
 """
+
+
+def coder_prompt(task: str):
+
+    return f"""
+You are a senior software engineer.
+
+Implement exactly ONE file.
+
+Return the complete code.
+
+Task:
+
+{task}
+
+After generating the code, call the write_file tool.
+
+Do not explain anything.
+"""
+

@@ -1,7 +1,10 @@
-from typing import Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
+from typing import Optional, Annotated
+
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 
 
 class File(BaseModel):
@@ -56,6 +59,14 @@ class TaskPlan(BaseModel):
     model_config = ConfigDict(extra="allow")
     
 class CoderState(BaseModel):
-    task_plan: TaskPlan = Field(description="The plan for the task to be implemented")
-    current_step_idx: int = Field(0, description="The index of the current step in the implementation steps")
-    current_file_content: Optional[str] = Field(None, description="The content of the file currently being edited or created")
+    user_prompt: str
+
+    plan: Optional[Plan] = None
+
+    task_plan: Optional[TaskPlan] = None
+
+    messages: Annotated[list[AnyMessage], add_messages] = []
+
+    current_step_idx: int = 0
+
+    current_file_content: Optional[str] = None
