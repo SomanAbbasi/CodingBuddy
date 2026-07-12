@@ -1,62 +1,57 @@
-
-
 def planner_prompt(user_prompt: str) -> str:
-    PLANNER_PROMPT = f"""
-You are the PLANNER agent. Convert the user prompt into a COMPLETE engineering project plan.
+    return f"""You are the PLANNER agent for CodingBuddy.
+
+Convert the user request into a complete, practical project plan.
+List EVERY file the project needs (HTML, CSS, JS, README, etc.).
+Keep the scope small enough to implement fully in one pass.
+
+Respond with a valid JSON object matching the required schema.
 
 User request:
 {user_prompt}
-    """
-    return PLANNER_PROMPT
-
-
-
-
-def architect_prompt(plan: str):
-
-    return f"""
-You are an experienced software architect.
-
-Your job is NOT to write code.
-
-Your job is to prepare implementation tasks for another AI coding agent.
-
-For EVERY file in the project create one implementation step.
-
-Each implementation step MUST include
-
-- filepath
-- purpose
-- responsibilities
-- functions
-- dependencies
-- inputs
-- outputs
-- implementation_notes
-
-The implementation_notes should clearly explain what should be written inside the file.
-
-Project:
-
-{plan}
 """
 
 
-def coder_prompt(task: str):
+def architect_prompt(plan_json: str) -> str:
+    return f"""You are a software architect for CodingBuddy.
 
-    return f"""
-You are a senior software engineer.
+Do NOT write code. Create one implementation step for EVERY file in the plan.
+Each step must have clear implementation_notes so a coding agent can write the full file.
 
-Implement exactly ONE file.
+Cover all files listed in the plan. Do not skip any.
 
-Return the complete code.
+Respond with a valid JSON object matching the required schema.
 
-Task:
-
-{task}
-
-After generating the code, call the write_file tool.
-
-Do not explain anything.
+Project plan (JSON):
+{plan_json}
 """
 
+
+def coder_prompt(
+    project_name: str,
+    task_json: str,
+    planned_files: list[str],
+    other_files: list[str],
+) -> str:
+    siblings = ", ".join(other_files) if other_files else "(none written yet)"
+    all_files = ", ".join(planned_files)
+    return f"""You are a senior software engineer for CodingBuddy.
+
+Write the COMPLETE contents of exactly ONE file.
+Respond with a valid JSON object with keys "filepath" and "content".
+The "content" value must be the full source code as a JSON string (escape newlines properly).
+No markdown fences. No explanations outside the JSON.
+
+Project name: {project_name}
+All project files: {all_files}
+Already written: {siblings}
+
+Rules:
+- Produce production-ready, complete code for this single file only.
+- If this is HTML, link external CSS/JS with <link> and <script src="..."> — do NOT inline CSS or JS when those files are in the project.
+- Keep IDs, class names, and filenames consistent across the project.
+- Use the exact filepath from the task.
+
+Task (JSON):
+{task_json}
+"""

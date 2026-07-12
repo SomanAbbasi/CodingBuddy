@@ -1,128 +1,202 @@
+import logging
+import os
+from typing import Literal
+
 from dotenv import load_dotenv
-from prompts import planner_prompt, architect_prompt, coder_prompt
-from state import Plan, TaskPlan, CoderState
-
 from langchain_groq import ChatGroq
-from langgraph.graph import StateGraph
-from langgraph.prebuilt import ToolNode
-from langgraph.graph import END
+from langgraph.graph import END, StateGraph
 
-from tools import write_file
+from graph.prompts import architect_prompt, coder_prompt, planner_prompt
+from graph.state import CoderState, GeneratedFile, ImplementationTask, Plan, TaskPlan
+from graph.tools import write_project_file
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 
-llm = ChatGroq(
-    model="qwen/qwen3.6-27b",
-    temperature=0,
-)
-
-llm_with_tools = llm.bind_tools([write_file])
+# Free-tier Groq model (override with GROQ_MODEL in .env)
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 
+def build_llm() -> ChatGroq:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY is missing. Copy .env.example to .env and add your key "
+            "from https://console.groq.com/keys"
+        )
 
-def planner_agent(state: CoderState):
-    user_prompt = state.user_prompt
-
-    planner = llm.with_structured_output(
-        Plan,
-        method="json_schema",
+    model = os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+    return ChatGroq(
+        model=model,
+        temperature=0,
+        max_tokens=8192,
+        api_key=api_key,
     )
 
-    plan = planner.invoke(planner_prompt(user_prompt))
 
-    state.plan = plan
-    return state
-
+def _normalize_path(path: str) -> str:
+    return path.replace("\\", "/").lstrip("./")
 
 
-def architect_agent(state: CoderState):
-    prompt = architect_prompt(
-        state.plan.model_dump_json()
+def planner_agent(state: CoderState) -> dict:
+    llm = build_llm()
+    planner = llm.with_structured_output(Plan, method="json_schema")
+
+    try:
+        plan = planner.invoke(planner_prompt(state.user_prompt))
+    except Exception as exc:
+        logger.exception("Planner failed")
+        return {"errors": [f"Planner error: {exc}"]}
+
+    if not plan.files:
+        return {"errors": ["Planner returned no files to create."]}
+
+    logger.info("Plan ready: %s (%d files)", plan.name, len(plan.files))
+    return {"plan": plan, "errors": []}
+
+
+def architect_agent(state: CoderState) -> dict:
+    if state.plan is None:
+        return {"errors": ["Architect skipped: no plan available."]}
+
+    llm = build_llm()
+    architect = llm.with_structured_output(TaskPlan, method="json_schema")
+
+    try:
+        task_plan = architect.invoke(
+            architect_prompt(state.plan.model_dump_json(indent=2))
+        )
+    except Exception as exc:
+        logger.exception("Architect failed")
+        return {"errors": [*(state.errors or []), f"Architect error: {exc}"]}
+
+    if not task_plan.implementation_steps:
+        return {
+            "errors": [
+                *(state.errors or []),
+                "Architect returned no implementation steps.",
+            ]
+        }
+
+    planned = {_normalize_path(f) for f in state.plan.files}
+    covered = {
+        _normalize_path(s.filepath) for s in task_plan.implementation_steps
+    }
+    for missing in sorted(planned - covered):
+        task_plan.implementation_steps.append(
+            ImplementationTask(
+                filepath=missing,
+                purpose=f"Implement {missing}",
+                implementation_notes=(
+                    f"Create a complete, working {missing} for the project "
+                    f"'{state.plan.name}'. Integrate with the other project files."
+                ),
+            )
+        )
+
+    logger.info(
+        "Architect ready: %d steps", len(task_plan.implementation_steps)
     )
-
-    architect = llm.with_structured_output(
-        TaskPlan,
-        method="json_schema",
-    )
-
-    task_plan = architect.invoke(prompt)
-
-    state.task_plan = task_plan
-    state.current_step_idx = 0
-
-    return state
+    return {
+        "task_plan": task_plan,
+        "current_step_idx": 0,
+        "generated_files": [],
+    }
 
 
+def coder_agent(state: CoderState) -> dict:
+    if state.plan is None or state.task_plan is None:
+        return {"errors": [*(state.errors or []), "Coder skipped: missing plan."]}
 
-def coder_agent(state: CoderState):
+    steps = state.task_plan.implementation_steps
+    if state.current_step_idx >= len(steps):
+        return {}
 
-    task = state.task_plan.implementation_steps[
-        state.current_step_idx
-    ]
+    task = steps[state.current_step_idx]
+    llm = build_llm()
+    coder = llm.with_structured_output(GeneratedFile, method="json_schema")
 
     prompt = coder_prompt(
-        f"""
-Project Name:
-{state.plan.name}
-
-Task:
-{task.model_dump_json(indent=2)}
-"""
+        project_name=state.plan.name,
+        task_json=task.model_dump_json(indent=2),
+        planned_files=state.plan.files,
+        other_files=state.generated_files,
     )
 
-    response = llm_with_tools.invoke(prompt)
+    try:
+        generated = coder.invoke(prompt)
+    except Exception as exc:
+        logger.exception("Coder failed on %s", task.filepath)
+        return {
+            "errors": [
+                *(state.errors or []),
+                f"Coder error for {task.filepath}: {exc}",
+            ]
+        }
 
-    state.messages = [response]
+    filepath = (generated.filepath or "").strip() or task.filepath
+    content = generated.content
+    if not content or not str(content).strip():
+        return {
+            "errors": [
+                *(state.errors or []),
+                f"Coder returned empty content for {filepath}",
+            ]
+        }
 
-    return state
+    try:
+        written = write_project_file(state.plan.name, filepath, content)
+    except Exception as exc:
+        logger.exception("Write failed for %s", filepath)
+        return {
+            "errors": [
+                *(state.errors or []),
+                f"Write error for {filepath}: {exc}",
+            ]
+        }
 
-def next_file(state: CoderState):
-    state.current_step_idx += 1
-    return state
+    logger.info("Wrote %s", written)
+    return {
+        "generated_files": [*(state.generated_files or []), filepath],
+        "current_step_idx": state.current_step_idx + 1,
+    }
 
 
-def should_continue(state: CoderState):
-
-    if state.current_step_idx >= len(state.task_plan.implementation_steps):
+def after_planner(state: CoderState) -> Literal["architect", "__end__"]:
+    if state.errors or state.plan is None:
         return END
+    return "architect"
 
+
+def after_architect(state: CoderState) -> Literal["coder", "__end__"]:
+    if state.errors or state.task_plan is None:
+        return END
     return "coder"
 
 
-
-user_prompt = "Create a Simple Todo List app in html, css, javascript"
-
-tool_node = ToolNode([write_file])
-
-graph = StateGraph(CoderState)
-
-graph.add_node("planner", planner_agent)
-graph.add_node("architect", architect_agent)
-graph.add_node("coder", coder_agent)
-graph.add_node("tools", tool_node)
-graph.add_node("next_file", next_file)
+def should_continue(state: CoderState) -> Literal["coder", "__end__"]:
+    if state.errors:
+        return END
+    if state.task_plan is None:
+        return END
+    if state.current_step_idx >= len(state.task_plan.implementation_steps):
+        return END
+    return "coder"
 
 
-graph.add_edge("planner", "architect")
-graph.add_edge("architect", "coder")
-graph.add_edge("coder", "tools")
-graph.add_edge("tools", "next_file")
-graph.add_conditional_edges(
-    "next_file",
-    should_continue,
-)
+def build_graph():
+    graph = StateGraph(CoderState)
+    graph.add_node("planner", planner_agent)
+    graph.add_node("architect", architect_agent)
+    graph.add_node("coder", coder_agent)
 
-graph.add_edge("tools", END)
+    graph.set_entry_point("planner")
+    graph.add_conditional_edges("planner", after_planner)
+    graph.add_conditional_edges("architect", after_architect)
+    graph.add_conditional_edges("coder", should_continue)
 
-graph.set_entry_point("planner")
+    return graph.compile()
 
-agent = graph.compile()
 
-result = agent.invoke(
-    CoderState(
-        user_prompt=user_prompt
-    )
-)
-
-print(result)
+agent = build_graph()

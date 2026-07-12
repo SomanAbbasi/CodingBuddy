@@ -1,22 +1,28 @@
 from pathlib import Path
 
-from langchain_core.tools import tool
-
-PROJECT_ROOT = Path("generated_projects")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent / "generated_projects"
 
 
-@tool
-def write_file(project_name: str, filepath: str, content: str) -> str:
+def safe_project_folder(project_name: str) -> Path:
+    folder = "".join(c if c.isalnum() or c in "-_" else "_" for c in project_name.strip())
+    folder = folder.strip("_") or "untitled_project"
+    return PROJECT_ROOT / folder
+
+
+def write_project_file(project_name: str, filepath: str, content: str) -> str:
     """
     Create or overwrite a file inside the project folder.
+    Rejects path traversal outside the project directory.
     """
+    if not filepath or not filepath.strip():
+        raise ValueError("filepath cannot be empty")
 
-    folder = project_name.replace(" ", "_")
+    project_dir = safe_project_folder(project_name).resolve()
+    target = (project_dir / filepath).resolve()
 
-    full_path = PROJECT_ROOT / folder / filepath
+    if not str(target).startswith(str(project_dir)):
+        raise ValueError(f"Invalid filepath (path traversal blocked): {filepath}")
 
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-
-    full_path.write_text(content, encoding="utf-8")
-
-    return f"Successfully wrote {full_path}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return str(target.relative_to(PROJECT_ROOT.parent))

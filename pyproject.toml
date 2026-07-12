@@ -1,7 +1,7 @@
 [project]
 name = "codingbuddy"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI coding buddy that plans and generates complete project files using Groq"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
